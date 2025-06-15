@@ -25,6 +25,8 @@ interface ExtraButtonBarProps {
   onClearCanvas: () => void;
   pages: Page[];
   canvasRef: React.RefObject<HTMLCanvasElement>;
+  currentPageId: string;
+  onPagesChange: (pages: Page[]) => void;
 }
 
 const backgroundPatterns = [
@@ -40,7 +42,9 @@ const ExtraButtonBar: React.FC<ExtraButtonBarProps> = ({
   onSettingsChange, 
   onClearCanvas,
   pages,
-  canvasRef
+  canvasRef,
+  currentPageId,
+  onPagesChange
 }) => {
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [exportDropdownVisible, setExportDropdownVisible] = useState(false);
@@ -211,27 +215,66 @@ const ExtraButtonBar: React.FC<ExtraButtonBarProps> = ({
                 disabled={settings.infinite}
               />
             </div>
+<div>
+  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+    Background Pattern
+  </label>
+  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+    <Select
+      value={settings.backgroundColor || '#ffffff'}
+      onChange={(value) => onSettingsChange({ ...settings, backgroundColor: value })}
+      style={{ flex: 1 }}
+      onClick={(e) => e.stopPropagation()}
+      options={backgroundPatterns.map(pattern => ({
+        value: pattern.value,
+        label: (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span>{pattern.preview}</span>
+            <span>{pattern.label}</span>
+          </div>
+        )
+      }))}
+    />
+    <ColorPicker
+      value={settings.backgroundColor || '#ffffff'}
+      onChange={(color) => onSettingsChange({ ...settings, backgroundColor: color.toHexString() })}
+    />
+  </div>
+</div>
 
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
-                Background Pattern
-              </label>
-              <Select
-                value={settings.backgroundColor || '#ffffff'}
-                onChange={(value) => onSettingsChange({ ...settings, backgroundColor: value })}
-                style={{ width: '100%' }}
-                onClick={(e) => e.stopPropagation()}
-                options={backgroundPatterns.map(pattern => ({
-                  value: pattern.value,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span>{pattern.preview}</span>
-                      <span>{pattern.label}</span>
-                    </div>
-                  )
-                }))}
-              />
-            </div>
+<div>
+  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+    Import File
+  </label>
+  <input
+    type="file"
+    accept="image/*,application/pdf"
+    onChange={(e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const dataURL = event.target?.result as string;
+          const updatedPages = pages.map(page => 
+            page.id === currentPageId 
+              ? { ...page, backgroundImage: dataURL }
+              : page
+          );
+          onPagesChange(updatedPages);
+          message.success('Image imported as background');
+        };
+        reader.readAsDataURL(file);
+      } else if (file.type === 'application/pdf') {
+        // For PDF handling, you'd need a PDF.js implementation
+        message.info('PDF import will be supported in a future update');
+      }
+    }}
+    style={{ width: '100%' }}
+    onClick={(e) => e.stopPropagation()}
+  />
+</div>
             
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>

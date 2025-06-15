@@ -40,6 +40,8 @@ interface ToolBarProps {
   onClearCanvas: () => void;
   pages: Page[];
   canvasRef: React.RefObject<HTMLCanvasElement>;
+  currentPageId: string;
+  onPagesChange: (pages: Page[]) => void;
 }
 
 export default function ToolBar({ 
@@ -47,7 +49,9 @@ export default function ToolBar({
   onCanvasSettingsChange, 
   onClearCanvas,
   pages,
-  canvasRef
+  canvasRef,
+  currentPageId,
+  onPagesChange
 }: ToolBarProps) {
     const handleToolSelect = (toolId: 'pan' | 'pen') => {
         onCanvasSettingsChange({
@@ -128,6 +132,8 @@ export default function ToolBar({
                     onClearCanvas={onClearCanvas}
                     pages={pages}
                     canvasRef={canvasRef}
+                    currentPageId={currentPageId}
+                    onPagesChange={onPagesChange} 
                 />
             </Flex>
         </Flex>

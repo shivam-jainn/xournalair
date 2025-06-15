@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { Point, Stroke, CanvasObject, Page } from '../types/canvas';
 
 interface CanvasSettings {
   paperSize: 'A4' | 'A3' | 'Letter' | 'Custom' | 'Infinite';
@@ -9,117 +10,6 @@ interface CanvasSettings {
   selectedColor?: string;
 }
 
-interface Page {
-  id: string;
-  canvas: ImageData | null;
-  backgroundImage?: string;
-  backgroundPdf?: string;
-}
-
-const PAPER_SIZES = {
-  A4: { width: 794, height: 1123 },
-  A3: { width: 1123, height: 1587 },
-  Letter: { width: 816, height: 1056 },
-  Custom: { width: 800, height: 600 },
-  Infinite: { width: 0, height: 0 }
-};
-
-// Background patterns
-const BACKGROUND_PATTERNS = {
-  white: (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-  },
-  grid: (ctx: CanvasRenderingContext2D, width: number, height: number, zoom: number) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 0.5;
-    const gridSize = 20 * zoom;
-    
-    for (let x = 0; x <= width; x += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
-    
-    for (let y = 0; y <= height; y += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-  },
-  dots: (ctx: CanvasRenderingContext2D, width: number, height: number, zoom: number) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.fillStyle = '#e0e0e0';
-    const dotSize = 1;
-    const spacing = 20 * zoom;
-    
-    for (let x = spacing; x < width; x += spacing) {
-      for (let y = spacing; y < height; y += spacing) {
-        ctx.beginPath();
-        ctx.arc(x, y, dotSize, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  },
-  lines: (ctx: CanvasRenderingContext2D, width: number, height: number, zoom: number) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 0.5;
-    const spacing = 30 * zoom;
-    
-    for (let y = spacing; y < height; y += spacing) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-  },
-  isometric: (ctx: CanvasRenderingContext2D, width: number, height: number, zoom: number) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 0.5;
-    const spacing = 30 * zoom;
-    
-    // Vertical lines
-    for (let x = 0; x <= width; x += spacing) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
-    
-    // Diagonal lines (60 degrees)
-    const angle = Math.PI / 3;
-    const dy = spacing * Math.sin(angle);
-    const dx = spacing * Math.cos(angle);
-    
-    for (let x = -height; x <= width + height; x += dx) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x + height * Math.cos(angle), height);
-      ctx.stroke();
-    }
-    
-    for (let x = -height; x <= width + height; x += dx) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x - height * Math.cos(angle), height);
-      ctx.stroke();
-    }
-  }
-};
-
 interface CanvasProps {
   settings: CanvasSettings;
   currentPageId: string;
@@ -129,26 +19,122 @@ interface CanvasProps {
   canvasRef?: React.RefObject<HTMLCanvasElement>;
 }
 
-const Canvas: React.FC<CanvasProps> = ({ 
-  settings, 
-  currentPageId, 
-  pages, 
+const PAPER_SIZES = {
+  'A4': { width: 595, height: 842 },  // A4 in points (72dpi)
+  'A3': { width: 842, height: 1191 }, // A3 in points
+  'Letter': { width: 612, height: 792 }, // US Letter
+  'Custom': { width: 800, height: 600 }, // Default custom size
+  'Infinite': { width: 2000, height: 2000 } // Base size for infinite mode
+};
+
+const Canvas: React.FC<CanvasProps> = ({
+  settings,
+  currentPageId,
+  pages,
   onPagesChange,
   onCurrentPageChange,
   canvasRef: externalCanvasRef
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [lastPoint, setLastPoint] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-
-  // Use external ref if provided, otherwise use internal ref
   const canvasRef = externalCanvasRef || internalCanvasRef;
-  const currentPage = pages.find(p => p.id === currentPageId);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  
+  // Viewport transform state
+  const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 1 });
+  
+  // Drawing state
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
+  
+  // Get current page data
+  const currentPage = pages.find(p => p.id === currentPageId) || pages[0];
+  
+  // Initialize page objects if needed
+  useEffect(() => {
+    if (!currentPage.objects) {
+      const updatedPages = pages.map(page => 
+        page.id === currentPageId 
+          ? { ...page, objects: { strokes: [], transform: { x: 0, y: 0, scale: 1 } } } 
+          : page
+      );
+      onPagesChange(updatedPages);
+    }
+  }, [currentPageId, pages, onPagesChange]);
 
+    // Function to redraw all strokes on canvas
+  const redrawCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !currentPage.objects) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Clear canvas with background color first
+    ctx.fillStyle = settings.backgroundColor || '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Get transform values
+    const { x: offsetX, y: offsetY, scale } = viewTransform;
+    
+    // If not infinite, draw paper boundaries
+    if (!settings.infinite) {
+      const paperSize = PAPER_SIZES[settings.paperSize];
+      const paperWidth = paperSize.width * settings.zoom;
+      const paperHeight = paperSize.height * settings.zoom;
+      
+      // Center paper in viewport
+      const x = (canvas.width / (window.devicePixelRatio || 1) - paperWidth) / 2;
+      const y = (canvas.height / (window.devicePixelRatio || 1) - paperHeight) / 2;
+      
+      // Draw paper background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x, y, paperWidth, paperHeight);
+      
+      // Draw paper border
+      ctx.strokeStyle = '#cccccc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, paperWidth, paperHeight);
+      
+      // Set clipping region to paper boundaries for non-infinite mode
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, paperWidth, paperHeight);
+      ctx.clip();
+    }
+    
+    // Apply view transform
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+    
+    // Draw all strokes
+    currentPage.objects.strokes.forEach(stroke => {
+      if (stroke.points.length < 2) return;
+      
+      ctx.beginPath();
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      
+      for (let i = 1; i < stroke.points.length; i++) {
+        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      }
+      
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = stroke.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    });
+    
+    // Restore context
+    ctx.restore();
+    
+    if (!settings.infinite) {
+      // Restore clipping region
+      ctx.restore();
+    }
+  }, [canvasRef, currentPage, settings, viewTransform]);
+
+  // Setup canvas size based on container and settings
   const setupCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -157,271 +143,237 @@ const Canvas: React.FC<CanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const devicePixelRatio = window.devicePixelRatio || 1;
+    // Set canvas size to match container
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
     
-    let canvasWidth, canvasHeight;
+    // Apply device pixel ratio for sharp rendering
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = container.clientWidth * dpr;
+    canvas.height = container.clientHeight * dpr;
+    canvas.style.width = `${container.clientWidth}px`;
+    canvas.style.height = `${container.clientHeight}px`;
+    ctx.scale(dpr, dpr);
     
-    if (settings.infinite) {
-      canvasWidth = container.clientWidth;
-      canvasHeight = container.clientHeight;
-    } else {
-      const paperDimensions = PAPER_SIZES[settings.paperSize];
-      canvasWidth = paperDimensions.width * settings.zoom;
-      canvasHeight = paperDimensions.height * settings.zoom;
-    }
-
-    canvas.width = canvasWidth * devicePixelRatio;
-    canvas.height = canvasHeight * devicePixelRatio;
-    canvas.style.width = `${canvasWidth}px`;
-    canvas.style.height = `${canvasHeight}px`;
-
-    ctx.scale(devicePixelRatio, devicePixelRatio);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-
-    // Draw background pattern based on backgroundColor
-    drawBackgroundPattern(ctx, canvasWidth, canvasHeight);
-
-    // Draw background image/PDF if exists
-    if (currentPage?.backgroundImage) {
-      const img = new Image();
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-        restorePageContent(ctx, canvasWidth, canvasHeight);
-      };
-      img.src = currentPage.backgroundImage;
-    } else {
-      restorePageContent(ctx, canvasWidth, canvasHeight);
-    }
-  }, [settings, currentPage, canvasRef]);
-
-  const drawBackgroundPattern = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    const bgColor = settings.backgroundColor || '#ffffff';
+    // Clear canvas with background color
+    ctx.fillStyle = settings.backgroundColor || '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    switch (bgColor) {
-      case '#ffffff':
-        BACKGROUND_PATTERNS.white(ctx, width, height);
-        break;
-      case '#f0f0f0':
-        BACKGROUND_PATTERNS.grid(ctx, width, height, settings.zoom);
-        break;
-      case '#e8f4fd':
-        BACKGROUND_PATTERNS.dots(ctx, width, height, settings.zoom);
-        break;
-      case '#fff2e8':
-        BACKGROUND_PATTERNS.lines(ctx, width, height, settings.zoom);
-        break;
-      case '#f0f8e8':
-        BACKGROUND_PATTERNS.isometric(ctx, width, height, settings.zoom);
-        break;
-      default:
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, width, height);
+    // If not infinite, draw paper boundaries
+    if (!settings.infinite) {
+      const paperSize = PAPER_SIZES[settings.paperSize];
+      const paperWidth = paperSize.width * settings.zoom;
+      const paperHeight = paperSize.height * settings.zoom;
+      
+      // Center paper in viewport
+      const x = (container.clientWidth - paperWidth) / 2;
+      const y = (container.clientHeight - paperHeight) / 2;
+      
+      // Draw paper background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x, y, paperWidth, paperHeight);
+      
+      // Draw paper border
+      ctx.strokeStyle = '#cccccc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, paperWidth, paperHeight);
     }
-  }, [settings]);
+    
+    // Redraw all strokes
+    redrawCanvas();
+  }, [settings, canvasRef, redrawCanvas]);
 
-  const restorePageContent = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    if (currentPage?.canvas) {
-      const tempCanvas = document.createElement('canvas');
-      const tempCtx = tempCanvas.getContext('2d');
-      if (tempCtx) {
-        tempCanvas.width = currentPage.canvas.width;
-        tempCanvas.height = currentPage.canvas.height;
-        tempCtx.putImageData(currentPage.canvas, 0, 0);
-        ctx.drawImage(tempCanvas, 0, 0, width, height);
-      }
-    }
-  }, [currentPage]);
 
-  const saveCurrentPage = useCallback(() => {
+  // Handle mouse/touch interactions
+const startDrawing = useCallback((x: number, y: number) => {
+  if (settings.selectedTool === 'pan') return;
+  
+  setIsDrawing(true);
+  
+  // Convert screen coordinates to world coordinates
+  const worldX = (x - viewTransform.x) / viewTransform.scale;
+  const worldY = (y - viewTransform.y) / viewTransform.scale;
+  
+  // Create new stroke
+  const newStroke: Stroke = {
+    id: Date.now().toString(),
+    tool: settings.selectedTool || 'pen',
+    points: [{ x: worldX, y: worldY }],
+    color: settings.selectedColor || '#000000',
+    width: 2 // Could be configurable
+  };
+  
+  setCurrentStroke(newStroke);
+}, [settings, viewTransform]);
+  const continueDrawing = useCallback((x: number, y: number) => {
+    if (!isDrawing || !currentStroke) return;
+    
+    // Convert screen coordinates to world coordinates
+    const worldX = (x - viewTransform.x) / viewTransform.scale;
+    const worldY = (y - viewTransform.y) / viewTransform.scale;
+    
+    // Add point to current stroke
+    const updatedStroke = {
+      ...currentStroke,
+      points: [...currentStroke.points, { x: worldX, y: worldY }]
+    };
+    
+    setCurrentStroke(updatedStroke);
+    
+    // Draw the latest segment
     const canvas = canvasRef.current;
-    if (!canvas || !currentPage) return;
-
+    if (!canvas) return;
+    
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
+    // Apply transform
+    ctx.save();
+    ctx.translate(viewTransform.x, viewTransform.y);
+    ctx.scale(viewTransform.scale, viewTransform.scale);
+    
+    // Draw just the latest segment for better performance
+    const points = updatedStroke.points;
+    const lastIndex = points.length - 1;
+    
+    if (lastIndex > 0) {
+      ctx.beginPath();
+      ctx.moveTo(points[lastIndex - 1].x, points[lastIndex - 1].y);
+      ctx.lineTo(points[lastIndex].x, points[lastIndex].y);
+      ctx.strokeStyle = updatedStroke.color;
+      ctx.lineWidth = updatedStroke.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+    
+    ctx.restore();
+  }, [isDrawing, currentStroke, viewTransform, canvasRef]);
 
-    try {
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const endDrawing = useCallback(() => {
+    if (!isDrawing || !currentStroke) {
+      setIsDrawing(false);
+      return;
+    }
+    
+    // Add completed stroke to page objects
+    if (currentPage.objects && currentStroke.points.length > 1) {
+      const updatedObjects = {
+        ...currentPage.objects,
+        strokes: [...currentPage.objects.strokes, currentStroke]
+      };
       
-      const updatedPages = pages.map(page => 
-        page.id === currentPageId 
-          ? { ...page, canvas: imageData }
+      const updatedPages = pages.map(page =>
+        page.id === currentPageId
+          ? { ...page, objects: updatedObjects }
           : page
       );
       
       onPagesChange(updatedPages);
-    } catch (error) {
-      console.error('Error saving page:', error);
     }
-  }, [currentPageId, pages, onPagesChange, currentPage, canvasRef]);
+    
+    setIsDrawing(false);
+    setCurrentStroke(null);
+  }, [isDrawing, currentStroke, currentPage, pages, currentPageId, onPagesChange]);
 
-  useEffect(() => {
-    setupCanvas();
-  }, [setupCanvas]);
+  // Pan logic
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  
+  const startPanning = useCallback((x: number, y: number) => {
+    setIsPanning(true);
+    setPanStart({ x, y });
+  }, []);
+  
+  const continuePanning = useCallback((x: number, y: number) => {
+    if (!isPanning) return;
+    
+    const dx = x - panStart.x;
+    const dy = y - panStart.y;
+    
+    setViewTransform(prev => ({
+      ...prev,
+      x: prev.x + dx,
+      y: prev.y + dy
+    }));
+    
+    setPanStart({ x, y });
+  }, [isPanning, panStart]);
+  
+  const endPanning = useCallback(() => {
+    setIsPanning(false);
+  }, []);
 
-  useEffect(() => {
-    const handleResize = () => {
-      if (settings.infinite) {
-        setupCanvas();
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [setupCanvas, settings.infinite]);
-
-  const getCanvasCoordinates = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    return {
-      x: (e.clientX - rect.left) * scaleX / (window.devicePixelRatio || 1),
-      y: (e.clientY - rect.top) * scaleY / (window.devicePixelRatio || 1)
-    };
-  }, [canvasRef]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const coords = getCanvasCoordinates(e);
+  // Mouse event handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     
     if (settings.selectedTool === 'pan') {
-      setIsPanning(true);
-      setPanStart(coords);
-    } else if (settings.selectedTool === 'pen') {
-      setIsDrawing(true);
-      setLastPoint(coords);
-
-      const ctx = canvasRef.current?.getContext('2d');
-      if (ctx) {
-        // Set drawing properties immediately
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = settings.selectedColor || '#000000';
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        
-        ctx.beginPath();
-        ctx.moveTo(coords.x, coords.y);
-        // Draw a small dot for single clicks
-        ctx.lineTo(coords.x + 0.1, coords.y + 0.1);
-        ctx.stroke();
-      }
+      startPanning(x, y);
+    } else {
+      startDrawing(x, y);
     }
-  }, [getCanvasCoordinates, canvasRef, settings.selectedTool, settings.selectedColor]);
-
-  const handleMouseUp = useCallback(() => {
-    if (isDrawing) {
-      setIsDrawing(false);
-      saveCurrentPage();
-    }
+  }, [settings.selectedTool, startPanning, startDrawing]);
+  
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     
     if (isPanning) {
-      setIsPanning(false);
+      continuePanning(x, y);
+    } else if (isDrawing) {
+      continueDrawing(x, y);
     }
-  }, [saveCurrentPage, isDrawing, isPanning]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const coords = getCanvasCoordinates(e);
-    
-    if (isPanning && settings.selectedTool === 'pan') {
-      const deltaX = coords.x - panStart.x;
-      const deltaY = coords.y - panStart.y;
-      setPanOffset(prev => ({
-        x: prev.x + deltaX,
-        y: prev.y + deltaY
-      }));
-      setPanStart(coords);
-    } else if (isDrawing && settings.selectedTool === 'pen') {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!ctx) return;
-
-      // Ensure drawing properties are set for each stroke
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = settings.selectedColor || '#000000';
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
-      ctx.beginPath();
-      ctx.moveTo(lastPoint.x, lastPoint.y);
-      ctx.lineTo(coords.x, coords.y);
-      ctx.stroke();
-
-      setLastPoint(coords);
+  }, [isPanning, isDrawing, continuePanning, continueDrawing]);
+  
+  const handleMouseUp = useCallback(() => {
+    if (isPanning) {
+      endPanning();
+    } else if (isDrawing) {
+      endDrawing();
     }
-  }, [isDrawing, isPanning, getCanvasCoordinates, lastPoint, panStart, settings.selectedTool, settings.selectedColor, canvasRef]);
-
-  const handlePaste = useCallback((e: ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const blob = items[i].getAsFile();
-        if (blob) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const dataURL = event.target?.result as string;
-            const updatedPages = pages.map(page => 
-              page.id === currentPageId 
-                ? { ...page, backgroundImage: dataURL }
-                : page
-            );
-            onPagesChange(updatedPages);
-          };
-          reader.readAsDataURL(blob);
-        }
-      }
-    }
-  }, [currentPageId, pages, onPagesChange]);
-
+  }, [isPanning, isDrawing, endPanning, endDrawing]);
+  
+  // Setup and cleanup
   useEffect(() => {
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, [handlePaste]);
-
-  const getCursor = () => {
-    if (settings.selectedTool === 'pan') {
-      return isPanning ? 'grabbing' : 'grab';
-    }
-    if (settings.selectedTool === 'pen') return 'crosshair';
-    return 'default';
-  };
+    setupCanvas();
+    window.addEventListener('resize', setupCanvas);
+    
+    return () => {
+      window.removeEventListener('resize', setupCanvas);
+    };
+  }, [setupCanvas]);
+  
+  // Redraw when view transform changes
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas, viewTransform]);
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', background: '#f5f5f5' }}>
-      <div 
-        ref={containerRef}
-        style={{ 
-          flex: 1, 
-          display: 'flex', 
-          justifyContent: settings.infinite ? 'stretch' : 'center',
-          alignItems: settings.infinite ? 'stretch' : 'flex-start',
-          padding: settings.infinite ? 0 : '2rem',
-          minHeight: settings.infinite ? '100%' : 'auto'
+    <div 
+      ref={containerRef}
+      style={{ 
+        flex: 1, 
+        overflow: 'hidden',
+        position: 'relative',
+        backgroundColor: '#f0f0f0'
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        style={{
+          display: 'block',
+          position: 'absolute',
+          touchAction: 'none'
         }}
-      >
-        <canvas
-          ref={canvasRef}
-          style={{
-            border: settings.infinite ? 'none' : '1px solid #ddd',
-            borderRadius: settings.infinite ? 0 : '8px',
-            boxShadow: settings.infinite ? 'none' : '0 4px 12px rgba(0,0,0,0.1)',
-            cursor: getCursor(),
-            width: settings.infinite ? '100%' : 'auto',
-            height: settings.infinite ? '100%' : 'auto',
-            transform: settings.infinite ? `translate(${panOffset.x}px, ${panOffset.y}px)` : 'none'
-          }}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseUp}
-        />
-      </div>
+      />
     </div>
   );
 };

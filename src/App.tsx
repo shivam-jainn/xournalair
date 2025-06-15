@@ -4,7 +4,7 @@ import PageSidebar from "./components/PageSidebar";
 import { Flex } from "antd";
 import { useState, useRef, ErrorInfo } from "react";
 import React from "react";
-import ToolBar from "./components/Toolbar";
+import ToolBar from "./components/ToolBar";
 
 interface CanvasSettings {
   paperSize: 'A4' | 'A3' | 'Letter' | 'Custom' | 'Infinite';
@@ -13,15 +13,28 @@ interface CanvasSettings {
   backgroundColor?: string;
   selectedTool?: 'pan' | 'pen';
   selectedColor?: string;
+ wasInfinite?: boolean; 
 }
 
 interface Page {
   id: string;
-  canvas: ImageData | null;
+  objects: {
+    strokes: Array<{
+      id: string;
+      tool: 'pen' | 'eraser';
+      points: Array<{x: number, y: number}>;
+      color: string;
+      width: number;
+    }>;
+    transform: {
+      x: number;
+      y: number;
+      scale: number;
+    };
+  };
   backgroundImage?: string;
   backgroundPdf?: string;
 }
-
 
 
 // Error Boundary Component
@@ -70,44 +83,71 @@ function App() {
   });
 
   const [pages, setPages] = useState<Page[]>([
-    { id: '1', canvas: null }
-  ]);
+  { 
+    id: '1', 
+    objects: { 
+      strokes: [], 
+      transform: { x: 0, y: 0, scale: 1 } 
+    } 
+  }
+]);
   
   const [currentPageId, setCurrentPageId] = useState('1');
   const [sidebarVisible, setSidebarVisible] = useState(true);
 
-  const handleAddPage = () => {
-    const newPageId = Date.now().toString();
-    const newPage: Page = {
-      id: newPageId,
-      canvas: null
-    };
-    setPages(prev => [...prev, newPage]);
-    setCurrentPageId(newPageId);
+const handleAddPage = () => {
+  const newPageId = Date.now().toString();
+  setPages(prev => [
+    ...prev, 
+    { 
+      id: newPageId, 
+      objects: { 
+        strokes: [], 
+        transform: { x: 0, y: 0, scale: 1 } 
+      } 
+    }
+  ]);
+  setCurrentPageId(newPageId);
+};
+
+  const handleSettingsChange = (newSettings: CanvasSettings) => {
+  // Track when switching to/from infinite mode
+  if (newSettings.infinite !== canvasSettings.infinite) {
+    newSettings.wasInfinite = canvasSettings.infinite;
+  }
+  setCanvasSettings(newSettings);
+};
+
+  const handlePagesChange = (newPages: Page[]) => {
+    setPages(newPages);
   };
 
-  const handleClearCanvas = () => {
-    // Clear current page canvas data
-    const updatedPages = pages.map(page => 
-      page.id === currentPageId 
-        ? { ...page, canvas: null }
-        : page
-    );
-    setPages(updatedPages);
-    
-    // Force canvas redraw
-    setCanvasSettings(prev => ({ ...prev }));
-  };
+const handleClearCanvas = () => {
+  const updatedPages = pages.map(page => 
+    page.id === currentPageId 
+      ? { 
+          ...page, 
+          objects: { 
+            ...page.objects, 
+            strokes: [] 
+          } 
+        }
+      : page
+  );
+  setPages(updatedPages);
+};
 
   return (
     <ErrorBoundary>
       <Flex style={{height:'100vh'}} vertical>
-        <ToolBar 
+        <ToolBar
           canvasSettings={canvasSettings}
-          onCanvasSettingsChange={setCanvasSettings}
+          onCanvasSettingsChange={handleSettingsChange}
           onClearCanvas={handleClearCanvas}
           pages={pages}
           canvasRef={canvasRef}
+          currentPageId={currentPageId}
+          onPagesChange={handlePagesChange}
         />
         <Flex style={{ flex: 1 }}>
           {!canvasSettings.infinite && (
