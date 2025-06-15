@@ -62,45 +62,50 @@ const Canvas: React.FC<CanvasProps> = ({
   }, [currentPageId, pages, onPagesChange]);
 
     // Function to redraw all strokes on canvas
-  const redrawCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !currentPage.objects) return;
+const redrawCanvas = useCallback(() => {
+  const canvas = canvasRef.current;
+  if (!canvas || !currentPage.objects) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  
+  // Clear entire canvas with a neutral color first (for area outside paper)
+  ctx.fillStyle = '#f0f0f0'; // Background area color
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Get transform values
+  const { x: offsetX, y: offsetY, scale } = viewTransform;
+  
+  // If not infinite, draw paper with selected background color
+  if (!settings.infinite) {
+    const paperSize = PAPER_SIZES[settings.paperSize];
+    const paperWidth = paperSize.width * settings.zoom;
+    const paperHeight = paperSize.height * settings.zoom;
     
-    // Clear canvas with background color first
+    // Center paper in viewport
+    const x = (canvas.width / (window.devicePixelRatio || 1) - paperWidth) / 2 + offsetX;
+    const y = (canvas.height / (window.devicePixelRatio || 1) - paperHeight) / 2 + offsetY;
+    
+    // Draw paper background with the selected pattern/color
+    ctx.fillStyle = settings.backgroundColor || '#ffffff';
+    ctx.fillRect(x, y, paperWidth, paperHeight);
+    
+    // Draw paper border
+    ctx.strokeStyle = '#cccccc';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, paperWidth, paperHeight);
+    
+    // Set clipping region to paper boundaries for non-infinite mode
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, paperWidth, paperHeight);
+    ctx.clip();
+  } else {
+    // In infinite mode, use the background color for everything
     ctx.fillStyle = settings.backgroundColor || '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Get transform values
-    const { x: offsetX, y: offsetY, scale } = viewTransform;
-    
-    // If not infinite, draw paper boundaries
-    if (!settings.infinite) {
-      const paperSize = PAPER_SIZES[settings.paperSize];
-      const paperWidth = paperSize.width * settings.zoom;
-      const paperHeight = paperSize.height * settings.zoom;
-      
-      // Center paper in viewport
-      const x = (canvas.width / (window.devicePixelRatio || 1) - paperWidth) / 2;
-      const y = (canvas.height / (window.devicePixelRatio || 1) - paperHeight) / 2;
-      
-      // Draw paper background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(x, y, paperWidth, paperHeight);
-      
-      // Draw paper border
-      ctx.strokeStyle = '#cccccc';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, paperWidth, paperHeight);
-      
-      // Set clipping region to paper boundaries for non-infinite mode
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x, y, paperWidth, paperHeight);
-      ctx.clip();
-    }
+  }
+  
     
     // Apply view transform
     ctx.save();
@@ -285,20 +290,21 @@ const startDrawing = useCallback((x: number, y: number) => {
     setPanStart({ x, y });
   }, []);
   
-  const continuePanning = useCallback((x: number, y: number) => {
-    if (!isPanning) return;
-    
-    const dx = x - panStart.x;
-    const dy = y - panStart.y;
-    
-    setViewTransform(prev => ({
-      ...prev,
-      x: prev.x + dx,
-      y: prev.y + dy
-    }));
-    
-    setPanStart({ x, y });
-  }, [isPanning, panStart]);
+const continuePanning = useCallback((x: number, y: number) => {
+  if (!isPanning) return;
+  
+  const dx = x - panStart.x;
+  const dy = y - panStart.y;
+  
+  // Update view transform (this moves the viewport, not the content)
+  setViewTransform(prev => ({
+    ...prev,
+    x: prev.x + dx,
+    y: prev.y + dy
+  }));
+  
+  setPanStart({ x, y });
+}, [isPanning, panStart]);
   
   const endPanning = useCallback(() => {
     setIsPanning(false);
